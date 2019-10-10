@@ -141,7 +141,9 @@ pub enum PactSource {
     /// Load all the pacts from a Directory
     Dir(String),
     /// Load the pact from a URL
-    URL(String, Option<UrlAuth>)
+    URL(String, Option<UrlAuth>),
+    /// Load the pact from a file with URLs
+    URLFile(String, Option<UrlAuth>)
 }
 
 fn pact_source(matches: &ArgMatches) -> Vec<PactSource> {
@@ -162,6 +164,11 @@ fn pact_source(matches: &ArgMatches) -> Vec<PactSource> {
         }).collect::<Vec<PactSource>>()),
         None => ()
     };
+    match matches.value_of("url-file") {
+        Some(file) => sources.push(PactSource::URLFile(s!(file), matches.value_of("user").map(|u| UrlAuth::User(u.to_string()))
+            .or(matches.value_of("token").map(|v| UrlAuth::Token(v.to_string()))))),
+        None => ()
+    }
     sources
 }
 
@@ -246,7 +253,12 @@ fn load_pacts(sources: Vec<PactSource>, runtime: &mut Runtime, insecure_tls: boo
             &PactSource::URL(ref url, ref auth) => vec![
                 pact_from_url(url.clone(), auth, runtime, insecure_tls)
                     .map_err(|err| format!("Failed to load pact '{}' - {}", url, err))
-            ]
+            ],
+            &PactSource::URLFile(ref file, ref auth) => match fs::read_to_string(Path::new(file)) {
+                Ok(string) => string.lines().map(|url| pact_from_url(url.to_string(), auth, runtime, insecure_tls)
+                   .map_err(|err| format!("Failed to load pact '{}' - {}", url, err))).collect(),
+                Err(err) => vec![Err(format!("Could not load pact URLs from file '{}' - {}", file, err))]
+            }
         }
     })
         .collect()
@@ -273,7 +285,7 @@ fn handle_command_args() -> Result<(), i32> {
         .arg(Arg::with_name("file")
             .short("f")
             .long("file")
-            .required_unless_one(&["dir", "url"])
+            .required_unless_one(&["dir", "url", "url-file"])
             .takes_value(true)
             .use_delimiter(false)
             .multiple(true)
@@ -283,7 +295,7 @@ fn handle_command_args() -> Result<(), i32> {
         .arg(Arg::with_name("dir")
             .short("d")
             .long("dir")
-            .required_unless_one(&["file", "url"])
+            .required_unless_one(&["file", "url", "url-file"])
             .takes_value(true)
             .use_delimiter(false)
             .multiple(true)
@@ -293,13 +305,21 @@ fn handle_command_args() -> Result<(), i32> {
         .arg(Arg::with_name("url")
             .short("u")
             .long("url")
-            .required_unless_one(&["file", "dir"])
+            .required_unless_one(&["file", "dir", "url-file"])
             .takes_value(true)
             .use_delimiter(false)
             .multiple(true)
             .number_of_values(1)
             .empty_values(false)
             .help("URL of pact file to verify (can be repeated)"))
+        .arg(Arg::with_name("url-file")
+            .long("url-file")
+            .required_unless_one(&["file", "dir", "url"])
+            .takes_value(true)
+            .use_delimiter(false)
+            .number_of_values(1)
+            .empty_values(false)
+            .help("File with URLs of pact file to verify"))
         .arg(Arg::with_name("user")
           .long("user")
           .takes_value(true)
